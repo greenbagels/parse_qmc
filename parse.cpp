@@ -62,8 +62,8 @@ using unaveraged_map = std::map<double, unaveraged_data>;
 using averaged_map = std::map<double, averaged_data>;
 
 void parse_file(std::string in_fname, unaveraged_map &map);
-averaged_map average_data(unaveraged_map &map);
-void print_to_file(std::string out_fname, averaged_map &map);
+averaged_map average_data(const unaveraged_map &map);
+void print_to_file(std::string out_fname, const averaged_map &map);
 
 int main()
 {
@@ -91,7 +91,7 @@ int main()
                 parse_file(str, map);
             }
         }
-        auto final_temp_map = average_data(map);
+        const auto final_temp_map = average_data(map);
         fs::current_path(fs::current_path().parent_path().parent_path());
         print_to_file("beta_" + inverse_temp + "_parsed.dat", final_temp_map);
     }
@@ -155,7 +155,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
         double x, y, cf, cf_uc;
         sstream = std::stringstream(line);
         sstream >> x >> y >> cf >> cf_uc;
-        double r = std::hypot(x, y);
+        const double r = std::hypot(x, y);
         std::cerr << "Line corresponds to radius " << r << std::endl;
         // the entries are coordinate symmetric, so ignore the lower
         // triangle of the (x,y) matrix
@@ -193,7 +193,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     map[mu].d_moments.push_back(local_moment_uc);
 }
 
-averaged_map average_data(unaveraged_map &map)
+averaged_map average_data(const unaveraged_map &map)
 {
     averaged_map final_map;
 
@@ -209,8 +209,8 @@ averaged_map average_data(unaveraged_map &map)
     // Loop over chemical potential map
     for (auto it = map.begin(); it != map.end(); it++)
     {
-        auto mu = it->first;
-        auto &data = it->second;
+        const auto mu = it->first;
+        const auto &data = it->second;
         // Now, accumulate energies and moments, which have the same length.
         // The energies and moments are simply the averages of the corresponding
         // vectors, so we use std::accumulate to take advantage of parallelism (note:
@@ -249,17 +249,17 @@ averaged_map average_data(unaveraged_map &map)
 
         for (auto jt = data.Cms.begin(); jt != data.Cms.end(); jt++)
         {
-            auto r = jt->first;
-            auto &cms = jt->second;
+            const auto r = jt->first;
+            const auto &cms = jt->second;
             final_map[mu].Cm[r] = std::accumulate(cms.begin(), cms.end(), 0.) / cms.size();
-            final_map[mu].d_Cm[r] = std::sqrt(std::inner_product(data.d_Cms[r].begin(), data.d_Cms[r].end(), data.d_Cms[r].begin(), 0.)) / cms.size();
+            final_map[mu].d_Cm[r] = std::sqrt(std::inner_product(data.d_Cms.at(r).begin(), data.d_Cms.at(r).end(), data.d_Cms.at(r).begin(), 0.)) / cms.size();
         }
     }
 
     return final_map;
 }
 
-void print_to_file(std::string out_fname, averaged_map &map)
+void print_to_file(std::string out_fname, const averaged_map &map)
 {
     std::ofstream output_file(out_fname);
     // Now, print to files
