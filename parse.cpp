@@ -162,7 +162,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     sstream >> mu;
     if (in_fname.find("nr") != in_fname.npos)
     {
-        mu *= -1;
+        mu = -std::fabs(mu);
     }
     std::cerr << "Parsing chemical potential \u03BC = " << mu << std::endl;
 
@@ -353,11 +353,12 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     }
 
     // Now, local moment.
-    skip_lines(data_file, "0 0 local moment zz=");
+    line = skip_lines(data_file, "0 0 local moment zz=");
 
     sstream = std::stringstream(line.substr(line.find("=")+1));
     qmc::quantity<double> local_moment;
     sstream >> local_moment.value() >> local_moment.uncertainty();
+    std::cerr << "Chemical potential " << mu << " has local moment " << local_moment << std::endl;
 
     // We will square AFTER we average all the local moments over the number
     // of realizations. This might be less numerically desirable than the original
@@ -434,6 +435,7 @@ void print_core_data_to_file(std::string out_fname, const averaged_map &map)
 
 void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx)
 {
+    std::ofstream debug_out("debug_" + out_fname);
     std::ofstream output_file(out_fname);
     // Now, print to files
     output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    <n>    delta_<n>    ";
@@ -476,6 +478,11 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
             // Maybe we could consider including the reasoning here, too.
             auto cf = jt->second - quad_vals.at(cf_idx);
 
+            if (r == 1)
+                debug_out << std::setw(12) << mu
+                    << std::setw(12) << jt->second
+                    << std::setw(12) << quad_vals.at(cf_idx)
+                    << std::setw(12) << cf << std::endl;
             if (mu > 0)
             {
                 if (cf_idx == NIDJ)
@@ -486,7 +493,7 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
                 else if (cf_idx == DIDJ)
                 {
                     cf += data.cfs.at(NINJ).at(r) - quad_vals.at(NINJ)
-                        - 2. * data.cfs.at(NIDJ).at(r) - quad_vals.at(NIDJ);
+                        - 2. * (data.cfs.at(NIDJ).at(r) - quad_vals.at(NIDJ));
                 }
             }
             output_file << cf << " ";
