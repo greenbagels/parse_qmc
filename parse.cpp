@@ -488,7 +488,7 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
                 if (cf_idx == NIDJ)
                 {
                     // <n'd'> = <nn> - <nd>
-                    cf = data.cfs.at(NIDJ).at(r) - quad_vals.at(NIDJ) - cf;
+                    cf = data.cfs.at(NINJ).at(r) - quad_vals.at(NINJ) - cf;
                 }
                 else if (cf_idx == DIDJ)
                 {
