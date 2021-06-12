@@ -34,7 +34,8 @@ enum cf_index
     NINJ = 1,
     NIDJ = 2,
     DIDJ = 3,
-    NUM_CFS = 4
+    ZSPIN = 4,
+    NUM_CFS
 };
 
 enum cf_transform
@@ -64,6 +65,8 @@ struct unaveraged_data
     std::vector<qmc::quantity<double>> doublons;
     // density (N_up + N_down) samples
     std::vector<qmc::quantity<double>> densities;
+    // z spin ((N_up - N_down)/2) samples
+    std::vector<qmc::quantity<double>> z_spins;
     // The data files provide the correlated variables we can use to calculate
     // any of our correlation functions of interest.
 
@@ -93,6 +96,8 @@ struct averaged_data
     qmc::quantity<double> doublon;
     // Average density
     qmc::quantity<double> density;
+    // Average z spin
+    qmc::quantity<double> z_spin;
     // List of correlators:
     // averaged moment-moment correlator
     // averaged density-density correlator
@@ -146,6 +151,7 @@ int main(int argc, char* argv[])
         fs::current_path(fs::current_path().parent_path().parent_path());
         print_core_data_to_file("beta_" + inverse_temp + "_core.dat", final_temp_map);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_cm.dat",   final_temp_map, MIMJ, TRANS_NONE);
+        print_cf_data_to_file  ("beta_" + inverse_temp + "_cs.dat",   final_temp_map, ZSPIN, TRANS_NONE);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_nn.dat",   final_temp_map, NINJ, TRANS_NONE);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_nd.dat",   final_temp_map, NIDJ, TRANS_NONE);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_dd.dat",   final_temp_map, DIDJ, TRANS_NONE);
@@ -185,6 +191,23 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     sstream >> density.value() >> density.uncertainty();
 
     map[mu].densities.push_back(density);
+
+    // Now, up occupancy and down occupancy, which we use for the average spin
+    // By linearity, <Sz> = <(nup-ndown)/2>
+    //                    = <nup - ndown>/2
+    //                    = (<nup> - <ndown>)/2
+
+    qmc::quantity<double> nup, ndown;
+
+    std::getline(data_file, line);
+    sstream = std::stringstream(line.substr(line.find("=")+2));
+    sstream >> nup.value() >> nup.uncertainty();
+
+    std::getline(data_file, line);
+    sstream = std::stringstream(line.substr(line.find("=")+2));
+    sstream >> ndown.value() >> ndown.uncertainty();
+
+    map[mu].z_spins.push_back((nup - ndown)/2);
 
     // Now, the energy
     line = skip_lines(data_file, "Average Energy");
@@ -358,9 +381,25 @@ void parse_file(std::string in_fname, unaveraged_map &map)
         }
     }
 
-    // Now, local moment.
-    line = skip_lines(data_file, "0 0 local moment zz=");
+    // Now, the zz spin cf
+    skip_lines(data_file, "zz Spin correlation");
+    std::getline(data_file, line);
+    while (line.find("local moment zz=") == line.npos)
+    {
+        double x, y;
+        qmc::quantity<double> z_spin;
+        std::getline(data_file, line);
+        sstream = std::stringstream(line);
+        sstream >> x >> y >> z_spin.value() >> z_spin.uncertainty();
+        const auto r = std::hypot(x,y);
+        if (y >= x)
+        {
+            map[mu].cfs[ZSPIN][r].push_back(z_spin);
+        }
+        std::getline(data_file, line);
+    }
 
+    // Now, local moment.
     sstream = std::stringstream(line.substr(line.find("=")+1));
     qmc::quantity<double> local_moment;
     sstream >> local_moment.value() >> local_moment.uncertainty();
@@ -400,6 +439,7 @@ averaged_map average_data(const unaveraged_map &map)
         mudata.moment = qmc::average(data.moments);
         mudata.doublon = qmc::average(data.doublons);
         mudata.density = qmc::average(data.densities);
+        mudata.z_spin = qmc::average(data.z_spins);
 
         // Now, for each radius, we perform averaging of the corr. fun, and
         // add the errors in quadrature
@@ -459,12 +499,13 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
     {
         const auto mu = it->first;
         auto &data = it->second;
-        const std::array<qmc::quantity<double>, 4> quad_vals
+        const std::array<qmc::quantity<double>, NUM_CFS> quad_vals
         ({
             data.moment * data.moment,
             data.density * data.density,
             data.density * data.doublon,
-            data.doublon * data.doublon
+            data.doublon * data.doublon,
+            data.z_spin * data.z_spin
         });
 
         output_file << mu << " " << data.energy.value() << " " << data.energy.uncertainty() << " "
