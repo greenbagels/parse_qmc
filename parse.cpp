@@ -37,6 +37,12 @@ enum cf_index
     NUM_CFS = 4
 };
 
+enum cf_transform
+{
+    TRANS_NONE = 0,
+    TRANS_RECONCILE_POTENTIALS = 1
+};
+
 struct unaveraged_data
 {
     // ( mu -> X ), where X is one of:
@@ -102,7 +108,7 @@ std::string skip_lines(std::ifstream &ofs, std::string target);
 void parse_file(std::string in_fname, unaveraged_map &map);
 averaged_map average_data(const unaveraged_map &map);
 void print_core_data_to_file(std::string out_fname, const averaged_map &map);
-void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx);
+void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx, cf_transform xform);
 
 int main(int argc, char* argv[])
 {
@@ -139,10 +145,10 @@ int main(int argc, char* argv[])
         const auto final_temp_map = average_data(map);
         fs::current_path(fs::current_path().parent_path().parent_path());
         print_core_data_to_file("beta_" + inverse_temp + "_core.dat", final_temp_map);
-        print_cf_data_to_file  ("beta_" + inverse_temp + "_cm.dat",   final_temp_map, MIMJ);
-        print_cf_data_to_file  ("beta_" + inverse_temp + "_nn.dat",   final_temp_map, NINJ);
-        print_cf_data_to_file  ("beta_" + inverse_temp + "_nd.dat",   final_temp_map, NIDJ);
-        print_cf_data_to_file  ("beta_" + inverse_temp + "_dd.dat",   final_temp_map, DIDJ);
+        print_cf_data_to_file  ("beta_" + inverse_temp + "_cm.dat",   final_temp_map, MIMJ, TRANS_NONE);
+        print_cf_data_to_file  ("beta_" + inverse_temp + "_nn.dat",   final_temp_map, NINJ, TRANS_NONE);
+        print_cf_data_to_file  ("beta_" + inverse_temp + "_nd.dat",   final_temp_map, NIDJ, TRANS_NONE);
+        print_cf_data_to_file  ("beta_" + inverse_temp + "_dd.dat",   final_temp_map, DIDJ, TRANS_NONE);
     }
     return 0;
 }
@@ -433,7 +439,7 @@ void print_core_data_to_file(std::string out_fname, const averaged_map &map)
     }
 }
 
-void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx)
+void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx, cf_transform xform)
 {
     std::ofstream debug_out("debug_" + out_fname);
     std::ofstream output_file(out_fname);
@@ -483,7 +489,7 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
                     << std::setw(12) << jt->second
                     << std::setw(12) << quad_vals.at(cf_idx)
                     << std::setw(12) << cf << std::endl;
-            if (mu > 0)
+            if (xform == TRANS_RECONCILE_POTENTIALS && mu > 0)
             {
                 if (cf_idx == NIDJ)
                 {
