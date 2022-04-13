@@ -108,9 +108,11 @@ function parse_bandmott_file(filename)
     nidj = parse_bandmott_matrix("nup-nud correlation function", lines, 10)
     sisj = parse_bandmott_matrix("zz Spin correlation function", lines, 10)
 
+    sfs = Array{Matrix{Measurement{Float64}}, 1}(undef, 5)
+
     close(file)
     return Sample(total_sign, energy, density, nup, ndn, nupndn, measurement(0),
-                  measurement(0), fsf, afsf, [ninj, nidj, didj, mimj, sisj])
+                  measurement(0), fsf, afsf, [ninj, nidj, didj, mimj, sisj], sfs)
 end
 
 function average_data(unaveraged_data)
@@ -130,55 +132,157 @@ function average_data(unaveraged_data)
         connected = [n^2, n * nupndn, nupndn^2, moment^2, z_spin^2]
 
         cfs = Array{Matrix{Measurement{Float64}}, 1}(undef, 5)
+        sfs = Array{Matrix{Measurement{Float64}}, 1}(undef, 5)
         for i in 1:5
-            width = 2*(size(arr[1].cfs[1], 1)-1)
+            width = 2*(size(arr[1].cfs[1], 1) - 1)
             cfs[i] = Matrix{Measurement{Float64}}(undef, width, width)
             for j in 1:size(arr[1].cfs[1], 1), k in j:size(arr[1].cfs[1], 1)
                 cfs[i][k, j] = weightedmean([sample.cfs[i][k, j] for sample in arr]) - connected[i]
                 cfs[i][j, k] = cfs[i][k, j]
             end
+            flesh_out_cfs!(cfs[i])
+            # cf = cfs[i]
+            # @btime calculate_sfs($cf)
+            sfs[i] = calculate_sfs(cfs[i])
         end
         sample_map[mu] = Sample(total_sign, avg_energy, n, nup, ndn, nupndn, z_spin, moment,
-                                ferro_cf, antiferro_cf, cfs)
+                                ferro_cf, antiferro_cf, cfs, sfs)
     end
     return sample_map
 end
 
-function flesh_out_cfs!(averaged_data)
-    for (mu, sample) in averaged_data
-        n = Int(size(sample.cfs[1], 1)/2)
-        fulln = size(sample.cfs[1], 1)
-        for i in 1:5, x in 0:n, y in 0:n
-            sample.cfs[i][mod(-y, fulln) + 1, x + 1] =
-                sample.cfs[i][y + 1, x + 1]
-            sample.cfs[i][mod(-y, fulln) + 1, mod(-x, fulln) + 1] =
-                sample.cfs[i][y + 1, x + 1]
-            sample.cfs[i][y + 1, mod(-x, fulln) + 1] =
-                sample.cfs[i][y + 1, x + 1]
+function read_measurement_from_file(file)
+    value = read(file, Float64)
+    uncertainty = read(file, Float64)
+    return measurement(value, uncertainty)
+end
+
+function write_measurement_to_file(file, x)
+    write(file, Measurements.value(x))
+    write(file, Measurements.uncertainty(x))
+end
+
+function read_avg_data_from_file(filename)
+    sample_map = Dict{Float64, Sample{Float64}}()
+    open(filename, "r") do file
+        while !eof(file)
+            mu = read(file, Float64)
+            # println("Reading item for chemical potential $mu")
+            total_sign = read_measurement_from_file(file)
+            avg_energy = read_measurement_from_file(file)
+            n = read_measurement_from_file(file)
+            nup = read_measurement_from_file(file)
+            ndn = read_measurement_from_file(file)
+            nupndn = read_measurement_from_file(file)
+            z_spin = read_measurement_from_file(file)
+            moment = read_measurement_from_file(file)
+            ferro_cf = read_measurement_from_file(file)
+            antiferro_cf = read_measurement_from_file(file)
+            cfs = Array{Matrix{Measurement{Float64}}, 1}(undef, 5)
+            sfs = Array{Matrix{Measurement{Float64}}, 1}(undef, 5)
+            for i in 1:5
+                cfs[i] = Matrix{Measurement{Float64}}(undef, 10, 10)
+                for j in 1:10, k in 1:10
+                    cfs[i][k, j] = read_measurement_from_file(file)
+                end
+            end
+            for i in 1:5
+                sfs[i] = Matrix{Measurement{Float64}}(undef, 10, 10)
+                for j in 1:10, k in 1:10
+                    sfs[i][k, j] = read_measurement_from_file(file)
+                end
+            end
+            sample_map[mu] = Sample(total_sign, avg_energy, n, nup, ndn, nupndn,
+                                    z_spin, moment, ferro_cf, antiferro_cf, cfs, sfs)
+        end
+        println("test")
+    end
+    return sample_map
+end
+
+function write_avg_data_to_file(filename, samples)
+    open(filename, "w") do file
+        for (mu, sample) in samples
+            write(file, mu)
+            write_measurement_to_file(file, sample.total_sign)
+            write_measurement_to_file(file, sample.avg_energy)
+            write_measurement_to_file(file, sample.n)
+            write_measurement_to_file(file, sample.nup)
+            write_measurement_to_file(file, sample.ndn)
+            write_measurement_to_file(file, sample.nupndn)
+            write_measurement_to_file(file, sample.z_spin)
+            write_measurement_to_file(file, sample.moment)
+            write_measurement_to_file(file, sample.ferro_cf)
+            write_measurement_to_file(file, sample.antiferro_cf)
+            for i in 1:5, j in 1:10, k in 1:10
+                if isassigned(sample.cfs[i], k, j)
+                    write_measurement_to_file(file, sample.cfs[i][k, j])
+                else
+                    write_measurement_to_file(file, measurement(0., 0.))
+                end
+            end
+            for i in 1:5, j in 1:10, k in 1:10
+                if isassigned(sample.sfs, i) && isassigned(sample.sfs[i], k, j)
+                    write_measurement_to_file(file, sample.sfs[i][k, j])
+                else
+                    write_measurement_to_file(file, measurement(0., 0.))
+                end
+            end
         end
     end
+end
+
+# TODO: incorporate this into the average_data step, so that we construct a
+# sample with already-valid CFs
+function flesh_out_cfs!(cf)
+    n = Int(size(cf, 1)/2)
+    fulln = size(cf, 1)
+    for x in 0:n, y in 0:n
+        cf[mod(-y, fulln) + 1, x + 1] = cf[y + 1, x + 1]
+        cf[mod(-y, fulln) + 1, mod(-x, fulln) + 1] = cf[y + 1, x + 1]
+        cf[y + 1, mod(-x, fulln) + 1] = cf[y + 1, x + 1]
+    end
+end
+
+function calculate_sfs(cf)
+    n = size(cf, 1)
+    sf = similar(cf)
+    coeff = 2. * pi / n
+    Threads.@threads for i in 0:n*n-1
+        iqy = (i % n) + 1
+        iqx = Int(trunc(i / n)) + 1
+        qy = iqy * coeff
+        qx = iqx * coeff
+        # @btime calculate_single_sf($cf, $qx, $qy)
+        sf[iqy, iqx] = calculate_single_sf(cf, qx, qy)
+    end
+    return sf
+end
+
+function calculate_single_sf(cf, qx, qy)
+    sf = measurement(0., 0.)
+    # cf = sample.cfs[cf_index]
+
+    for ix in 1:size(cf, 1), iy in 1:size(cf, 1),
+        jx in 1:size(cf, 1), jy in 1:size(cf, 1)
+
+        dx = ix - jx
+        dy = iy - jy
+        absdx = Int(abs(dx))
+        absdy = Int(abs(dy))
+
+        sf += cos(qx * dx + qy * dy) * cf[absdy + 1, absdx + 1]
+    end
+    return sf / 100
 end
 
 function calculate_SAFs(averaged_data)
     # (pi,pi) fourier-transformed spin correlation function
     SAFs = Dict{Float64, Measurement{Float64}}()
-    qx = pi
-    qy = pi
     for (mu, sample) in averaged_data
-        SAFs[mu] = 0
-        spin_cf = sample.cfs[5]
-        #display(spin_cf)
-        #println()
-        for ix in 1:size(spin_cf, 1), iy in 1:size(spin_cf, 1),
-            jx in 1:size(spin_cf, 1), jy in 1:size(spin_cf, 1)
-            dx = ix - jx
-            dy = iy - jy
-            absdx = Int(abs(dx))
-            absdy = Int(abs(dy))
-            SAFs[mu] += cos(qx * dx + qy * dy) * spin_cf[absdy + 1, absdx + 1]
-        end
-        SAFs[mu] /= 100
+        # cf = sample.cfs[5]
+        # @btime calculate_single_sf($cf, pi, pi)
+        SAFs[mu] = calculate_single_sf(sample.cfs[5], pi, pi)
     end
     return SAFs
 end
-

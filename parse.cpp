@@ -44,6 +44,13 @@ enum cf_transform
     TRANS_RECONCILE_POTENTIALS = 1
 };
 
+enum g2_type
+{
+    G2_NORMAL = 0,
+    G2_ANTIMOMENT = 1,
+    G2_VARIANTS
+};
+
 struct unaveraged_data
 {
     // ( mu -> X ), where X is one of:
@@ -76,11 +83,12 @@ struct unaveraged_data
 
     // List of correlators:
     // ======================================
-    // - moment-moment correlator <m_i * m_j>
+    // - moment-moment correlator <m_i^2 * m_j^2>
     // - density-density correlator <n_i * n_j>
     // - density-doublon correlator <n_i * d_j>
     //     - because of the averaging, this is equal to <n_j * d_i>
     // - doublon-doublon correlator <d_i * d_j>
+    // - z-spin correlation <S_i * S_j>
     std::array<std::map<double, std::vector<qmc::quantity<double>>>, NUM_CFS> cfs;
 };
 
@@ -104,6 +112,7 @@ struct averaged_data
     // averaged density-doublon correlator
     // averaged doublon-doublon correlator
     std::array<std::map<double, qmc::quantity<double>>, NUM_CFS> cfs;
+    std::array<std::map<double, qmc::quantity<double>>, G2_VARIANTS> g2;
 };
 
 using unaveraged_map = std::map<double, unaveraged_data>;
@@ -114,6 +123,8 @@ void parse_file(std::string in_fname, unaveraged_map &map);
 averaged_map average_data(const unaveraged_map &map);
 void print_core_data_to_file(std::string out_fname, const averaged_map &map);
 void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx, cf_transform xform);
+void print_g2_data_to_file(std::string out_fname, const averaged_map &map, g2_type g2_variant);
+void print_gdh_data_to_file(std::string out_fname, const averaged_map &map);
 
 int main(int argc, char* argv[])
 {
@@ -155,6 +166,9 @@ int main(int argc, char* argv[])
         print_cf_data_to_file  ("beta_" + inverse_temp + "_nn.dat",   final_temp_map, NINJ, TRANS_NONE);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_nd.dat",   final_temp_map, NIDJ, TRANS_NONE);
         print_cf_data_to_file  ("beta_" + inverse_temp + "_dd.dat",   final_temp_map, DIDJ, TRANS_NONE);
+        print_g2_data_to_file  ("beta_" + inverse_temp + "_g2.dat",   final_temp_map, G2_NORMAL);
+        print_g2_data_to_file  ("beta_" + inverse_temp + "_g2bar.dat",final_temp_map, G2_ANTIMOMENT);
+        print_gdh_data_to_file ("beta_" + inverse_temp + "_gdh.dat",  final_temp_map);
     }
     return 0;
 }
@@ -211,7 +225,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
 
     // Now, the energy
     line = skip_lines(data_file, "Average Energy");
-    std::cerr << line << std::endl;
+    // std::cerr << line << std::endl;
 
     sstream = std::stringstream(line.substr(line.find("=")+2));
     qmc::quantity<double> avg_energy;
@@ -229,16 +243,16 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     // Doublon number
     line = skip_lines(data_file, "Average Nup*Ndn");
 
-    std::cerr << "Average d line: " << line << std::endl;
+    // std::cerr << "Average d line: " << line << std::endl;
     sstream = std::stringstream(line.substr(line.find("=")+2));
     qmc::quantity<double> avg_nup_ndown;
     sstream >> avg_nup_ndown.value() >> avg_nup_ndown.uncertainty();
 
-    std::cerr << "Found average doublon occupation: " << avg_nup_ndown.value() << std::endl;
+    // std::cerr << "Found average doublon occupation: " << avg_nup_ndown.value() << std::endl;
     map[mu].doublons.push_back(avg_nup_ndown);
 
-    std::cerr << "Density-doublon uncorrelated part: " << (density * avg_nup_ndown).value() << std::endl;
-    std::cerr << "Skipping non-density-density correlation data!\n";
+    // std::cerr << "Density-doublon uncorrelated part: " << (density * avg_nup_ndown).value() << std::endl;
+    // std::cerr << "Skipping non-density-density correlation data!\n";
     skip_lines(data_file, "density-density correlation fn");
 
     // Multiple distinct triples may have the same hypotenuse length,
@@ -251,7 +265,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     std::getline(data_file, line);
     while (line.find("nud-nud") == line.npos)
     {
-        std::cerr << "Density-density line found: " << line << std::endl;
+        // std::cerr << "Density-density line found: " << line << std::endl;
         double x, y;
         qmc::quantity<double> nup_nup, nup_ndown;
         sstream = std::stringstream(line);
@@ -282,7 +296,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     std::getline(data_file, line);
     while (line.find("0 0 dd") == line.npos)
     {
-        std::cerr << "Doublon-doublon line found: " << line << std::endl;
+        // std::cerr << "Doublon-doublon line found: " << line << std::endl;
         sstream = std::stringstream(line);
         double x, y;
         qmc::quantity<double> didj;
@@ -300,19 +314,19 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     std::getline(data_file, line);
     while (line.find("local") == line.npos)
     {
-        std::cerr << "Moment-moment line found: " << line << std::endl;
+        // std::cerr << "Moment-moment line found: " << line << std::endl;
         double x, y;
         qmc::quantity<double> mimj;
         sstream = std::stringstream(line);
         sstream >> x >> y >> mimj.value() >> mimj.uncertainty();
         const double r = std::hypot(x, y);
-        std::cerr << "Line corresponds to radius " << r << std::endl;
+        // std::cerr << "Line corresponds to radius " << r << std::endl;
         // the entries are coordinate symmetric, so ignore the lower
         // triangle of the (x,y) matrix
         if (y > x)
         {
             // TODO: organize the logic better
-            std::cerr << "y > x, so skipping:\n";
+            // std::cerr << "y > x, so skipping:\n";
             std::getline(data_file, line);
             continue;
         }
@@ -333,7 +347,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     int last_index = -1;
     while (line.find("0 0 nup.d") == line.npos)
     {
-        std::cerr << "up-doublon line found: " << line << std::endl;
+        // std::cerr << "up-doublon line found: " << line << std::endl;
         sstream = std::stringstream(line);
         int x, y;
         qmc::quantity<double> nup_nud;
@@ -346,8 +360,8 @@ void parse_file(std::string in_fname, unaveraged_map &map)
         }
         n_nuds.at(x).push_back(nup_nud);
 
-        std::cerr << "Pushed back values " << n_nuds.at(x).at(y).value() << " "
-            << n_nuds.at(x).at(y).uncertainty() << std::endl;
+        // std::cerr << "Pushed back values " << n_nuds.at(x).at(y).value() << " "
+        //    << n_nuds.at(x).at(y).uncertainty() << std::endl;
 
         std::getline(data_file, line);
     }
@@ -358,15 +372,15 @@ void parse_file(std::string in_fname, unaveraged_map &map)
 
     while (line.find("0 0 ndn.d") == line.npos)
     {
-        std::cerr << "down-doublon line found: " << line << std::endl;
+        // std::cerr << "down-doublon line found: " << line << std::endl;
         sstream = std::stringstream(line);
         int x, y;
         qmc::quantity<double> nd_nud;
         sstream >> x >> y >> nd_nud.value() >> nd_nud.uncertainty();
 
         n_nuds.at(x).at(y) += nd_nud;
-        std::cerr << "Found sum values " << n_nuds.at(x).at(y).value() << " "
-            << n_nuds.at(x).at(y).uncertainty() << std::endl;
+        // std::cerr << "Found sum values " << n_nuds.at(x).at(y).value() << " "
+        //    << n_nuds.at(x).at(y).uncertainty() << std::endl;
         std::getline(data_file, line);
     }
 
@@ -376,7 +390,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
         for (auto y = 0u; y < n_nuds.at(x).size(); y++)
         {
             const auto r = std::hypot(x, y);
-            std::cout << "Pushing correlation value " << n_nuds.at(x).at(y).value() << " at radius " << r << std::endl;
+            // std::cerr << "Pushing correlation value " << n_nuds.at(x).at(y).value() << " at radius " << r << std::endl;
             map[mu].cfs[NIDJ][r].push_back(n_nuds.at(x).at(y));
         }
     }
@@ -388,12 +402,14 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     {
         double x, y;
         qmc::quantity<double> z_spin;
-        std::getline(data_file, line);
         sstream = std::stringstream(line);
         sstream >> x >> y >> z_spin.value() >> z_spin.uncertainty();
         const auto r = std::hypot(x,y);
+        if (std::isnan(z_spin.value()) || std::isnan(z_spin.uncertainty()))
+            std::exit(12);
         if (y >= x)
         {
+            // std::cerr << r << std::endl;
             map[mu].cfs[ZSPIN][r].push_back(z_spin);
         }
         std::getline(data_file, line);
@@ -403,7 +419,7 @@ void parse_file(std::string in_fname, unaveraged_map &map)
     sstream = std::stringstream(line.substr(line.find("=")+1));
     qmc::quantity<double> local_moment;
     sstream >> local_moment.value() >> local_moment.uncertainty();
-    std::cerr << "Chemical potential " << mu << " has local moment " << local_moment << std::endl;
+    // std::cerr << "Chemical potential " << mu << " has local moment " << local_moment << std::endl;
 
     // We will square AFTER we average all the local moments over the number
     // of realizations. This might be less numerically desirable than the original
@@ -453,6 +469,17 @@ averaged_map average_data(const unaveraged_map &map)
                 mudata.cfs[i][r] = qmc::average(cf);
             }
         }
+
+        // Now, use the averages to calculate g2 and g2bar
+        for (auto it = mudata.cfs.at(MIMJ).begin(); it != mudata.cfs.at(MIMJ).end(); it++)
+        {
+            const auto r = it->first;
+            const auto g2 = it->second / (mudata.moment * mudata.moment);
+            const auto g2bar = (1. - 2. * mudata.moment + it->second) /
+                            ((1. - mudata.moment) * (1. - mudata.moment));
+            mudata.g2[G2_NORMAL][r] = g2;
+            mudata.g2[G2_ANTIMOMENT][r] = g2bar;
+        }
     }
     return final_map;
 }
@@ -461,7 +488,7 @@ void print_core_data_to_file(std::string out_fname, const averaged_map &map)
 {
     std::ofstream output_file(out_fname);
     // Now, print to files
-    output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    ";
+    output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    <n>    delta_<n>    <d>    delta_<d>    <nd>    delta_<nd>    ";
     // Take the first chemical potential, and print out all the lattice distances
     // it doesn't matter which potential we use, since they're all on the same lattice.
     output_file << std::endl;
@@ -472,8 +499,9 @@ void print_core_data_to_file(std::string out_fname, const averaged_map &map)
         const auto mu = it->first;
         const auto &data = it->second;
         output_file << mu << " " << data.energy.value() << " " << data.energy.uncertainty() << " "
-            << (data.moment*data.moment).value() << " " << (data.moment*data.moment).uncertainty() << " "
-            << data.density.value() << " " << data.density.uncertainty() << " ";
+            << data.moment.value() << " " << data.moment.uncertainty() << " "
+            << data.density.value() << " " << data.density.uncertainty() << " "
+            << data.doublon.value() << " " << data.doublon.uncertainty();
 
         output_file << std::endl;
     }
@@ -481,18 +509,18 @@ void print_core_data_to_file(std::string out_fname, const averaged_map &map)
 
 void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_index cf_idx, cf_transform xform)
 {
-    std::ofstream debug_out("debug_" + out_fname);
+    // std::ofstream debug_out("debug_" + out_fname);
     std::ofstream output_file(out_fname);
     // Now, print to files
     output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    <n>    delta_<n>    ";
-    output_file << std::setprecision(8);
     for (auto it = map.begin()->second.cfs.at(cf_idx).begin(); it != map.begin()->second.cfs.at(cf_idx).end(); it++)
     {
         const auto r = it->first;
-        output_file << "Cm(" << std::setprecision(3) << r <<
-            ")    dCm(" << std::setprecision(3) << r << ")    ";
+        output_file << "CF(" << std::setprecision(3) << r <<
+            ")    dCF(" << std::setprecision(3) << r << ")    ";
     }
     output_file << std::endl;
+    output_file << std::setprecision(4);
 
     // Print the cf data as a fn of mu
     for (auto it = map.begin(); it != map.end(); it++)
@@ -509,7 +537,7 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
         });
 
         output_file << mu << " " << data.energy.value() << " " << data.energy.uncertainty() << " "
-            << (data.moment*data.moment).value() << " " << (data.moment*data.moment).uncertainty() << " "
+            << data.moment.value() << " " << data.moment.uncertainty() << " "
             << data.density.value() << " " << data.density.uncertainty() << " ";
 
         for (auto jt = data.cfs.at(cf_idx).begin(); jt != data.cfs.at(cf_idx).end(); jt++)
@@ -525,11 +553,13 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
             // Maybe we could consider including the reasoning here, too.
             auto cf = jt->second - quad_vals.at(cf_idx);
 
+            /*
             if (r == 1)
                 debug_out << std::setw(12) << mu
                     << std::setw(12) << jt->second
                     << std::setw(12) << quad_vals.at(cf_idx)
                     << std::setw(12) << cf << std::endl;
+                    */
             if (xform == TRANS_RECONCILE_POTENTIALS && mu > 0)
             {
                 if (cf_idx == NIDJ)
@@ -544,6 +574,68 @@ void print_cf_data_to_file(std::string out_fname, const averaged_map &map, cf_in
                 }
             }
             output_file << cf << " ";
+        }
+        output_file << std::endl;
+    }
+}
+
+void print_g2_data_to_file(std::string out_fname, const averaged_map &map, g2_type g2_variant)
+{
+    std::ofstream output_file(out_fname);
+    output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    <n>    delta_<n>    ";
+    for (auto it = map.begin()->second.g2.at(g2_variant).begin(); it != map.begin()->second.g2.at(g2_variant).end(); it++)
+    {
+        const auto r = it->first;
+        output_file << "g2(" << std::setprecision(3) << r <<
+            ")    dg2(" << std::setprecision(3) << r << ")    ";
+    }
+    output_file << std::endl;
+    output_file << std::setprecision(4);
+
+    for (auto it = map.begin(); it != map.end(); it++)
+    {
+        const auto mu = it->first;
+        auto &data = it->second;
+
+        output_file << mu << " " << data.energy.value() << " " << data.energy.uncertainty() << " "
+            << data.moment.value() << " " << data.moment.uncertainty() << " "
+            << data.density.value() << " " << data.density.uncertainty() << " ";
+
+        for (auto jt = data.g2.at(g2_variant).begin(); jt != data.g2.at(g2_variant).end(); jt++)
+        {
+            output_file << jt->second << " ";
+        }
+        output_file << std::endl;
+    }
+}
+
+void print_gdh_data_to_file(std::string out_fname, const averaged_map &map)
+{
+    std::ofstream output_file(out_fname);
+    output_file << "# mu   <H>    delta_<H>    <mz^2>    delta_<mz^2>    <n>    delta_<n>    ";
+    for (auto it = map.begin()->second.cfs.at(NIDJ).begin(); it != map.begin()->second.cfs.at(NIDJ).end(); it++)
+    {
+        const auto r = it->first;
+        output_file << "gdh(" << std::setprecision(3) << r <<
+            ")    dgh(" << std::setprecision(3) << r << ")    ";
+    }
+    output_file << std::endl;
+    output_file << std::setprecision(4);
+
+    for (auto it = map.begin(); it != map.end(); it++)
+    {
+        const auto mu = it->first;
+        auto &data = it->second;
+
+        output_file << mu << " " << data.energy.value() << " " << data.energy.uncertainty() << " "
+            << data.moment.value() << " " << data.moment.uncertainty() << " "
+            << data.density.value() << " " << data.density.uncertainty() << " ";
+
+        for (auto jt = data.cfs.at(NIDJ).begin(); jt != data.cfs.at(NIDJ).end(); jt++)
+        {
+            // <dh> =  <d(2-n)>
+            //      = 2<d>-<dn>
+            output_file << (2.*data.doublon - jt->second)/(data.doublon * (2.-data.density)) << " ";
         }
         output_file << std::endl;
     }

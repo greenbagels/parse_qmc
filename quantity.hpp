@@ -68,8 +68,7 @@ namespace qmc
             quantity& operator+=(const quantity& rhs)
             {
                 _value += rhs.value();
-                _uncertainty = std::sqrt(_uncertainty * _uncertainty
-                                        +rhs.uncertainty() * uncertainty());
+                _uncertainty = std::hypot(_uncertainty, rhs.uncertainty());
                 return *this;
             }
 
@@ -84,8 +83,7 @@ namespace qmc
             quantity& operator-=(const quantity& rhs)
             {
                 _value -= rhs.value();
-                _uncertainty = std::sqrt(_uncertainty * _uncertainty
-                                        + rhs.uncertainty() * rhs.uncertainty());
+                _uncertainty = std::hypot(_uncertainty, rhs.uncertainty());
                 return *this;
             }
 
@@ -96,16 +94,20 @@ namespace qmc
                 return lhs;
             }
 
+            /*! Negate a quantity */
+            friend quantity operator-(const quantity& rhs)
+            {
+                return quantity(-rhs.value(), rhs.uncertainty());
+            }
+
             quantity& operator*=(const quantity &rhs)
             {
                 // First, grab the dX / X terms and square
                 auto term1 = _uncertainty / _value;
                 auto term2 = rhs.uncertainty() / rhs.value();
-                term1 *= term1;
-                term2 *= term2;
                 // Now, update the value and uncertainty
                 _value *= rhs.value();
-                _uncertainty = _value * std::sqrt(term1 + term2);
+                _uncertainty = _value * std::hypot(term1, term2);
                 return *this;
             }
 
@@ -115,16 +117,26 @@ namespace qmc
                 return lhs;
             }
 
+            friend quantity operator*(const T &lhs, quantity rhs)
+            {
+                rhs.value() *= lhs;
+                rhs.uncertainty() *= std::abs(lhs);
+                return rhs;
+            }
+
+            friend quantity operator*(quantity lhs, const T &rhs)
+            {
+                return rhs * lhs;
+            }
+
             quantity& operator/=(const quantity &rhs)
             {
                 // First, grab the dX / X terms and square
                 auto term1 = _uncertainty / _value;
                 auto term2 = rhs.uncertainty() / rhs.value();
-                term1 *= term1;
-                term2 *= term2;
                 // Now, update the value and uncertainty
                 _value /= rhs.value();
-                _uncertainty = _value * std::sqrt(term1 + term2);
+                _uncertainty = _value * std::hypot(term1, term2);
                 return *this;
             }
 
@@ -144,22 +156,22 @@ namespace qmc
             double _value, _uncertainty;
     };
 
+    // T requirements: has .value(), .quantity() of numeric type
     template <typename T>
-    auto average(std::vector<T> list)
+    T average(std::vector<T> list)
     {
         typename T::value_type weighted_sum(0.), sum_of_weights(0.);
         for (auto &qty : list)
         {
-            auto weight = 1.;
-            if (qty.uncertainty() == 0)
-                weight /= (0.00001 * 0.00001);
-            else
-                weight = 1. / (qty.uncertainty() * qty.uncertainty());
+            if (qty.uncertainty() == 0.)
+                return qty;
+            auto weight = 1. / (qty.uncertainty() * qty.uncertainty());
             weighted_sum += weight * qty.value();
             sum_of_weights += weight;
         }
         return T(weighted_sum / sum_of_weights, 1. / std::sqrt(sum_of_weights));
     }
+
 }
 
 #endif
