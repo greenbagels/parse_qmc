@@ -1,0 +1,6 @@
+parse
+*.out
+*.o
+*.dat
+*.log
+10x10
